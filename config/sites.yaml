@@ -1,0 +1,28 @@
+sites:
+  - id: example_wordpress
+    kind: wordpress
+    base: https://example_wordpress.net/
+    include_paths: ["/blog/"]
+    exclude_patterns: ["\\?utm_", "/tag/"]
+    rate_limit_rps: 1.0
+    max_pages: 5
+
+  - id: example_rss_feed
+    kind: rss
+    feed: https://example_rss_feed.net/feed/
+    rate_limit_rps: 1.0
+
+  - id: example_sitemap
+    kind: sitemap
+    sitemap: https://example.net/sitemap.xml
+    include_paths: ["/news/"]
+
+  - id: example_crawl
+    kind: crawl
+    base: https://weirdsite.tld
+    scope_host: weirdsite.tld
+    include_paths: ["/updates/"]
+    exclude_patterns: ["/page/\\d+$"]
+    max_depth: 2
+    rate_limit_rps: 0.5
+    js_render: false
