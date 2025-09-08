@@ -8,6 +8,7 @@ import time
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple
 from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import yaml
 
@@ -52,7 +53,7 @@ def _select_adapter(site: SiteConfig, ctx: Dict):
     raise ValueError(f"Unknown site kind: {site.kind}")
 
 
-def run_once(*, sites_path: str, out_dir: str, since_seconds: int | None) -> int:
+def run_once(*, sites_path: str, out_dir: str, since_seconds: int | None, concurrency: int = 1) -> int:
     os.makedirs(out_dir, exist_ok=True)
     run_id = _utcnow_iso()
     run_dir = os.path.join(out_dir, run_id)
@@ -77,54 +78,56 @@ def run_once(*, sites_path: str, out_dir: str, since_seconds: int | None) -> int
 
     # Logging and counters per site
     summary: List[Tuple[str, int, int, int]] = []  # site_id, new_count, total_seen, errors
-    with open(log_path, 'w') as logf:
-        for s in tqdm(sites):
-            counters: Dict = {
-                'fetched': 0,
-                'parsed': 0,
-                'discovered': 0,
-                'inserted': 0,
-                'skipped_robots': 0,
-                'errors': 0,
-                'status': {},
-            }
-            ctx = {
-                'http': http,
-                'robots': robots,
-                'ratelimiter': rl,
-                'db': conn,
-                'counters': counters,
-            }
-            adapter = _select_adapter(s, ctx)
-            logf.write(f"[{s.id}] start kind={s.kind}\n")
-            try:
-                for d in tqdm(adapter.discover()):
-                    # Normalize first, then resolve canonical only if likely new
-                    naive_norm = normalize_url(d.url)
-                    final_url, canon_tag = naive_norm, None
-                    # Only resolve redirects/canonical for URLs not seen before
-                    try:
-                        if not dbm.has_url(conn, naive_norm):
-                            site_ua = s.cfg.get('user_agent') if isinstance(s.cfg, dict) else None
-                            site_headers = s.cfg.get('headers') if isinstance(s.cfg, dict) else None
-                            resolved, canon = resolve_canonical_once(
-                                d.url,
-                                http,
-                                robots=robots,
-                                ratelimiter=rl,
-                                rps=float(s.cfg.get('rate_limit_rps', 1.0)),
-                                ua=site_ua,
-                                extra_headers=site_headers,
-                            )
-                            candidate = canon or resolved
-                            canon_tag = canon
-                            final_url = normalize_url(candidate)
-                    except Exception:
-                        # Fallback: keep naive normalization
-                        final_url = naive_norm
 
-                    is_new_url, first_seen_url = dbm.upsert_url(
-                        conn,
+    def _process_site(s: SiteConfig, position: int) -> Tuple[str, Dict]:
+        # Per-site DB connection to avoid sharing sqlite across threads
+        sconn = dbm.ensure_db(db_path)
+        counters: Dict = {
+            'fetched': 0,
+            'parsed': 0,
+            'discovered': 0,
+            'inserted': 0,
+            'skipped_robots': 0,
+            'errors': 0,
+            'status': {},
+        }
+        ctx = {
+            'http': http,
+            'robots': robots,
+            'ratelimiter': rl,
+            'db': sconn,
+            'counters': counters,
+        }
+        adapter = _select_adapter(s, ctx)
+        site_bar = tqdm(desc=f"{s.id}", position=position, leave=False)
+        try:
+            for d in adapter.discover():
+                site_bar.update(1)
+                naive_norm = normalize_url(d.url)
+                final_url, canon_tag = naive_norm, None
+                try:
+                    if not dbm.has_url(sconn, naive_norm):
+                        site_ua = s.cfg.get('user_agent') if isinstance(s.cfg, dict) else None
+                        site_headers = s.cfg.get('headers') if isinstance(s.cfg, dict) else None
+                        resolved, canon = resolve_canonical_once(
+                            d.url,
+                            http,
+                            robots=robots,
+                            ratelimiter=rl,
+                            rps=float(s.cfg.get('rate_limit_rps', 1.0)),
+                            ua=site_ua,
+                            extra_headers=site_headers,
+                        )
+                        candidate = canon or resolved
+                        canon_tag = canon
+                        final_url = normalize_url(candidate)
+                except Exception:
+                    final_url = naive_norm
+
+                # Group upsert + touch in a short transaction to keep locks brief
+                with sconn:
+                    dbm.upsert_url(
+                        sconn,
                         final_url,
                         canonical=canon_tag or d.canonical,
                         discovered_via=d.source,
@@ -132,18 +135,38 @@ def run_once(*, sites_path: str, out_dir: str, since_seconds: int | None) -> int
                         lastmod=d.lastmod,
                         etag=None,
                     )
-                    is_new_pair, first_seen_pair = dbm.touch_url_by_source(conn, s.id, final_url)
-                    if is_new_pair:
-                        counters['inserted'] += 1
-                conn.commit()
-            except Exception as e:
-                counters['errors'] += 1
-                logf.write(f"[{s.id}] ERROR: {e}\n")
-            # compute counts for site
-            new_count, total_seen = dbm.counts_for_site(conn, s.id)
-            summary.append((s.id, new_count, total_seen, counters['errors']))
-            # write per-site metrics snapshot to log
-            logf.write(f"[{s.id}] metrics: {json.dumps(counters)}\n")
+                    is_new_pair, _ = dbm.touch_url_by_source(sconn, s.id, final_url)
+                if is_new_pair:
+                    counters['inserted'] += 1
+        except Exception as e:
+            counters['errors'] += 1
+            counters['last_error'] = str(e)
+        finally:
+            site_bar.close()
+            sconn.close()
+        return s.id, counters
+
+    with open(log_path, 'w') as logf:
+        overall = tqdm(total=len(sites), desc='sites', position=0)
+        with ThreadPoolExecutor(max_workers=max(1, int(concurrency))) as ex:
+            futures = {ex.submit(_process_site, s, i + 1): s for i, s in enumerate(sites)}
+            for fut in as_completed(futures):
+                s = futures[fut]
+                try:
+                    sid, counters = fut.result()
+                except Exception as e:
+                    sid = s.id
+                    counters = {'errors': 1, 'fetched': 0, 'parsed': 0, 'discovered': 0, 'inserted': 0, 'skipped_robots': 0, 'status': {}, 'last_error': str(e)}
+                overall.update(1)
+                logf.write(f"[{sid}] start kind={s.kind}\n")
+                logf.write(f"[{sid}] metrics: {json.dumps(counters)}\n")
+        overall.close()
+
+    # After all sites processed, compute per-site counts summary
+    for s in sites:
+        new_count, total_seen = dbm.counts_for_site(conn, s.id)
+        # errors are already written in per-site metrics; for summary CSV, we don't aggregate errors here
+        summary.append((s.id, new_count, total_seen, 0))
 
     run_end = int(time.time())
     # Select new this run, or since flag override
@@ -174,9 +197,10 @@ def main(argv: List[str] | None = None) -> int:
     ap.add_argument('--sites', required=True, help='YAML config path')
     ap.add_argument('--out', default=os.path.join('data', 'runs'), help='Output directory')
     ap.add_argument('--since', type=int, default=None, help='SECONDS window for new items (overrides run window)')
+    ap.add_argument('--concurrency', type=int, default=1, help='Number of sites to process in parallel')
     args = ap.parse_args(argv)
 
-    return run_once(sites_path=args.sites, out_dir=args.out, since_seconds=args.since)
+    return run_once(sites_path=args.sites, out_dir=args.out, since_seconds=args.since, concurrency=args.concurrency)
 
 
 if __name__ == '__main__':

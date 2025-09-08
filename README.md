@@ -11,7 +11,8 @@ LinkHarvest is a pull‑based aggregator that discovers article/post URLs from m
  - Conditional GET (ETag/Last‑Modified) for feeds/sitemaps/APIs and crawled HTML pages (skips unchanged pages on 304)
 - Per‑host rate limiting + retries with exponential backoff and jitter
 - Per‑run artifacts (NDJSON/CSV) and per‑site counts, with run logs
- - Per‑site User‑Agent and headers overrides for sites that block default bots
+- Per‑site User‑Agent and headers overrides for sites that block default bots
+ - Cross‑site concurrency with per‑host politeness; overall and per‑site tqdm progress bars
 
 ## Requirements
 
@@ -119,12 +120,19 @@ Example (sitemap with browser‑like UA):
 ## CLI usage
 
 ```bash
-python3 -m src.runner --sites config/sites.yaml --out data/runs [--since SECONDS]
+python3 -m src.runner --sites config/sites.yaml --out data/runs [--since SECONDS] [--concurrency N]
 ```
 
 - `--sites PATH`: YAML config path (required)
 - `--out PATH`: Output directory (default `data/runs`)
 - `--since SECONDS`: Treat items with `first_seen >= now-SECONDS` as new (also writes `latest_all.csv` for items seen in that window)
+- `--concurrency N`: Number of sites to process in parallel (default 1). Per‑host politeness is preserved via a global rate limiter (one in‑flight request per host).
+
+## Concurrency & progress
+
+- Cross‑site parallelism: different sites run concurrently; each worker uses its own SQLite connection.
+- Per‑host politeness: a shared rate limiter coordinates all workers so only one request to the same host is in flight at a time.
+- Progress bars: an overall `sites` bar plus one per site shows discovery progress (updates as items are yielded by adapters).
 
 ## Outputs per run
 

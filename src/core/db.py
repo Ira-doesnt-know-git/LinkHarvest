@@ -39,9 +39,13 @@ CREATE INDEX IF NOT EXISTS idx_ubs_last_seen ON url_by_source(last_seen);
 
 def ensure_db(path: str) -> sqlite3.Connection:
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    conn = sqlite3.connect(path)
+    # Increase timeout to reduce SQLITE_BUSY under concurrent writers
+    conn = sqlite3.connect(path, timeout=30.0, check_same_thread=False)
     conn.execute('PRAGMA journal_mode=WAL;')
     conn.execute('PRAGMA synchronous=NORMAL;')
+    conn.execute('PRAGMA busy_timeout=30000;')
+    # Use autocommit by default to minimize the time any writer holds the DB lock
+    conn.isolation_level = None
     conn.executescript(SCHEMA)
     return conn
 
