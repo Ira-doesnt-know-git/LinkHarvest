@@ -30,6 +30,7 @@ class HttpClient:
         last_modified: Optional[str] = None,
         extra_headers: Optional[Dict[str, str]] = None,
         max_retries: int = 3,
+        follow_redirects: bool = True,
     ) -> httpx.Response:
         headers = {"User-Agent": self.ua}
         if etag:
@@ -42,7 +43,7 @@ class HttpClient:
         delay = 0.5
         for attempt in range(1, max_retries + 1):
             try:
-                resp = self.client.get(url, headers=headers)
+                resp = self.client.get(url, headers=headers, follow_redirects=follow_redirects)
             except Exception as e:
                 if attempt == max_retries:
                     raise

@@ -67,7 +67,9 @@ class JsCrawlAdapter(Adapter):
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            context = browser.new_context()
+            # Respect optional basic browser-like UA for JS rendering if provided
+            ua = self.cfg.get('user_agent')
+            context = browser.new_context(user_agent=ua) if ua else browser.new_context()
             page = context.new_page()
             try:
                 while q and rendered < max_rendered:
@@ -78,7 +80,7 @@ class JsCrawlAdapter(Adapter):
 
                     if not self._in_scope(url):
                         continue
-                    if not robots.allowed(url):
+                    if not robots.allowed(url, user_agent=ua):
                         counters['skipped_robots'] += 1
                         continue
 
@@ -90,12 +92,15 @@ class JsCrawlAdapter(Adapter):
                     # Preflight conditional GET to avoid rendering unchanged pages
                     rl.await_slot(url, rps)
                     etag, lastmod = dbm.get_resource_etag_lastmod(conn, url)
+                    extra_headers = dict(self.cfg.get('headers') or {})
+                    if ua:
+                        extra_headers['User-Agent'] = ua
                     try:
                         resp0 = http.get(
                             url,
                             etag=etag,
                             last_modified=lastmod,
-                            extra_headers={"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
+                            extra_headers={"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", **extra_headers},
                             max_retries=1,
                         )
                     except Exception:

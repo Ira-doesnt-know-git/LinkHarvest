@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 from lxml import html
@@ -48,17 +48,22 @@ def normalize_url(url: str) -> str:
     return urlunsplit((scheme, netloc, path, query, fragment))
 
 
-def resolve_canonical_once(url: str, http_client, *, robots=None, ratelimiter=None, rps: float = 1.0) -> Tuple[str, Optional[str]]:
+def resolve_canonical_once(url: str, http_client, *, robots=None, ratelimiter=None, rps: float = 1.0, ua: Optional[str] = None, extra_headers: Optional[Dict[str, str]] = None) -> Tuple[str, Optional[str]]:
     """
     Try a single redirect resolution via HEAD, and if HTML, prefer <link rel="canonical">.
     Returns (final_url, canonical_tag_url_or_None). If network unavailable, returns input.
     """
     try:
-        if robots and not robots.allowed(url):
+        if robots and not robots.allowed(url, user_agent=ua):
             return url, None
         if ratelimiter:
             ratelimiter.await_slot(url, rps)
-        resp = http_client.get(url, extra_headers={"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"}, max_retries=1)
+        headers = {"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"}
+        if ua:
+            headers["User-Agent"] = ua
+        if extra_headers:
+            headers.update(extra_headers)
+        resp = http_client.get(url, extra_headers=headers, max_retries=1)
     except Exception:
         return url, None
     if 300 <= resp.status_code < 400 and resp.headers.get('Location'):
@@ -73,4 +78,3 @@ def resolve_canonical_once(url: str, http_client, *, robots=None, ratelimiter=No
         except Exception:
             pass
     return url, None
-

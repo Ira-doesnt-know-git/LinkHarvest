@@ -8,9 +8,10 @@ LinkHarvest is a pull‑based aggregator that discovers article/post URLs from m
 
 - WordPress, RSS/Atom, Sitemap, and Crawl adapters; optional Playwright for JS rendering
 - SQLite persistence with strict URL normalization and first_seen/last_seen tracking
-- Conditional GET (ETag/Last‑Modified) for feeds/sitemaps/APIs and crawled HTML pages (skips unchanged pages on 304)
+ - Conditional GET (ETag/Last‑Modified) for feeds/sitemaps/APIs and crawled HTML pages (skips unchanged pages on 304)
 - Per‑host rate limiting + retries with exponential backoff and jitter
 - Per‑run artifacts (NDJSON/CSV) and per‑site counts, with run logs
+ - Per‑site User‑Agent and headers overrides for sites that block default bots
 
 ## Requirements
 
@@ -70,6 +71,24 @@ The adapter fetches:
   JS‑Crawl specifics:
   - Performs a preflight conditional GET before rendering; skips Playwright when preflight returns 304
   - Supports `recrawl_ttl_seconds` like Crawl
+
+### Per‑site headers and User‑Agent
+
+You can override the User‑Agent and add extra headers per site. These values are used consistently for:
+- robots.txt checks (same UA evaluated)
+- all HTTP requests (adapters and canonical resolution)
+
+Example (sitemap with browser‑like UA):
+
+```yaml
+- id: example_browser_ua
+  kind: sitemap
+  sitemap: https://example.com/sitemap_index.xml
+  user_agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36
+  headers:
+    Accept-Language: en-US,en;q=0.9
+  rate_limit_rps: 0.5
+```
 
 ### Crawl examples with TTL
 

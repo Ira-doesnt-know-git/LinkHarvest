@@ -28,14 +28,18 @@ class RSSAdapter(Adapter):
 
         feed_url = self.cfg['feed']
         rps = float(self.cfg.get('rate_limit_rps', 1.0))
+        ua = self.cfg.get('user_agent')
+        extra_headers = dict(self.cfg.get('headers') or {})
+        if ua:
+            extra_headers['User-Agent'] = ua
 
-        if not robots.allowed(feed_url):
+        if not robots.allowed(feed_url, user_agent=ua):
             counters['skipped_robots'] += 1
             return
         rl.await_slot(feed_url, rps)
         etag, lastmod = dbm.get_resource_etag_lastmod(conn, feed_url)
         try:
-            resp = http.get(feed_url, etag=etag, last_modified=lastmod)
+            resp = http.get(feed_url, etag=etag, last_modified=lastmod, extra_headers=extra_headers)
         except Exception:
             counters['errors'] += 1
             return

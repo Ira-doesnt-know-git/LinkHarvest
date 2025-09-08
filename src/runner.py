@@ -105,12 +105,16 @@ def run_once(*, sites_path: str, out_dir: str, since_seconds: int | None) -> int
                     # Only resolve redirects/canonical for URLs not seen before
                     try:
                         if not dbm.has_url(conn, naive_norm):
+                            site_ua = s.cfg.get('user_agent') if isinstance(s.cfg, dict) else None
+                            site_headers = s.cfg.get('headers') if isinstance(s.cfg, dict) else None
                             resolved, canon = resolve_canonical_once(
                                 d.url,
                                 http,
                                 robots=robots,
                                 ratelimiter=rl,
                                 rps=float(s.cfg.get('rate_limit_rps', 1.0)),
+                                ua=site_ua,
+                                extra_headers=site_headers,
                             )
                             candidate = canon or resolved
                             canon_tag = canon

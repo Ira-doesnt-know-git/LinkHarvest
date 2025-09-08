@@ -53,6 +53,10 @@ class CrawlerAdapter(Adapter):
         recrawl_ttl = int(self.cfg.get('recrawl_ttl_seconds', 0))  # optional, 0 disables
 
         visited: Set[str] = set()
+        ua = self.cfg.get('user_agent')
+        base_headers = dict(self.cfg.get('headers') or {})
+        if ua:
+            base_headers['User-Agent'] = ua
         q = deque([(base, 0)])
 
         while q:
@@ -60,7 +64,7 @@ class CrawlerAdapter(Adapter):
             if url in visited:
                 continue
             visited.add(url)
-            if not robots.allowed(url):
+            if not robots.allowed(url, user_agent=ua):
                 counters['skipped_robots'] += 1
                 continue
             if not self._in_scope(url):
@@ -73,7 +77,7 @@ class CrawlerAdapter(Adapter):
             rl.await_slot(url, rps)
             etag, lastmod = dbm.get_resource_etag_lastmod(conn, url)
             try:
-                resp = http.get(url, etag=etag, last_modified=lastmod)
+                resp = http.get(url, etag=etag, last_modified=lastmod, extra_headers=base_headers)
             except Exception:
                 counters['errors'] += 1
                 continue

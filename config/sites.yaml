@@ -6,16 +6,25 @@ sites:
     exclude_patterns: ["\\?utm_", "/tag/"]
     rate_limit_rps: 1.0
     max_pages: 5
+    # Optional: present a browser-like UA to pass strict WAFs
+    # user_agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36
+    # headers:
+    #   Accept-Language: en-US,en;q=0.9
 
   - id: example_rss_feed
     kind: rss
     feed: https://example_rss_feed.net/feed/
     rate_limit_rps: 1.0
+    # user_agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36
 
   - id: example_sitemap
     kind: sitemap
-    sitemap: https://example.net/sitemap.xml
+    sitemap: https://example.net/sitemap_index.xml
     include_paths: ["/news/"]
+    # Optional per-site headers/UA
+    # user_agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36
+    # headers:
+    #   Accept-Language: en-US,en;q=0.9
 
   - id: example_crawl
     kind: crawl
@@ -26,3 +35,8 @@ sites:
     max_depth: 2
     rate_limit_rps: 0.5
     js_render: false
+    # Optional: reduce revisit frequency and allow per-site UA/headers
+    # recrawl_ttl_seconds: 900
+    # user_agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36
+    # headers:
+    #   Accept-Language: en-US,en;q=0.9

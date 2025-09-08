@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from urllib.parse import urlsplit
 from urllib import robotparser
-from typing import Dict
+from typing import Dict, Optional
 
 import httpx
 
@@ -20,12 +20,13 @@ class RobotsCache:
         parts = urlsplit(url)
         return f"{parts.scheme}://{parts.netloc}/robots.txt"
 
-    def allowed(self, url: str) -> bool:
+    def allowed(self, url: str, user_agent: Optional[str] = None) -> bool:
         rob_url = self._robots_url(url)
         now = time.time()
         if rob_url not in self._cache or (now - self._fetched_at.get(rob_url, 0)) > self._ttl:
             try:
-                resp = self._client.get(rob_url, headers={"User-Agent": self._ua}, timeout=5.0)
+                ua = user_agent or self._ua
+                resp = self._client.get(rob_url, headers={"User-Agent": ua}, timeout=5.0, follow_redirects=True)
                 rp = robotparser.RobotFileParser()
                 if resp.status_code == 200:
                     rp.parse(resp.text.splitlines())
@@ -41,4 +42,5 @@ class RobotsCache:
                 self._cache[rob_url] = rp
                 self._fetched_at[rob_url] = now
         rp = self._cache[rob_url]
-        return rp.can_fetch(self._ua, url)
+        ua = user_agent or self._ua
+        return rp.can_fetch(ua, url)

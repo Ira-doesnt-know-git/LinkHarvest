@@ -38,15 +38,19 @@ class SitemapAdapter(Adapter):
 
         sitemap_url = self.cfg['sitemap']
         rps = float(self.cfg.get('rate_limit_rps', 1.0))
+        ua = self.cfg.get('user_agent')
+        base_headers = dict(self.cfg.get('headers') or {})
+        if ua:
+            base_headers['User-Agent'] = ua
 
         def fetch(url: str) -> str | None:
-            if not robots.allowed(url):
+            if not robots.allowed(url, user_agent=ua):
                 counters['skipped_robots'] += 1
                 return None
             rl.await_slot(url, rps)
             etag, lastmod = dbm.get_resource_etag_lastmod(conn, url)
             try:
-                resp = http.get(url, etag=etag, last_modified=lastmod)
+                resp = http.get(url, etag=etag, last_modified=lastmod, extra_headers=base_headers)
             except Exception:
                 counters['errors'] += 1
                 return None

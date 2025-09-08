@@ -32,16 +32,20 @@ class WordPressAdapter(Adapter):
         base = self.cfg['base']
         max_pages = int(self.cfg.get('max_pages', 10))
         rps = float(self.cfg.get('rate_limit_rps', 1.0))
+        ua = self.cfg.get('user_agent')
+        extra_headers = dict(self.cfg.get('headers') or {})
+        if ua:
+            extra_headers['User-Agent'] = ua
 
         for page in range(1, max_pages + 1):
             url = self._endpoint(base, page)
-            if not robots.allowed(url):
+            if not robots.allowed(url, user_agent=ua):
                 counters['skipped_robots'] += 1
                 break
             rl.await_slot(url, rps)
             etag, lastmod = dbm.get_resource_etag_lastmod(conn, url)
             try:
-                resp = http.get(url, etag=etag, last_modified=lastmod)
+                resp = http.get(url, etag=etag, last_modified=lastmod, extra_headers=extra_headers)
             except Exception:
                 counters['errors'] += 1
                 break
