@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from collections import deque
 from typing import Iterable, Set
 from urllib.parse import urljoin, urlsplit
@@ -9,6 +10,7 @@ from lxml import html
 from playwright.sync_api import sync_playwright
 
 from src.adapters.base import Adapter
+from src.core import db as dbm
 from src.core.models import Discovered
 
 
@@ -46,8 +48,10 @@ class JsCrawlAdapter(Adapter):
         if not self.cfg.get('js_render', False):
             return []
 
+        http = self.ctx['http']
         robots = self.ctx['robots']
         rl = self.ctx['ratelimiter']
+        conn = self.ctx['db']
         counters = self.ctx['counters']
 
         base = self.cfg['base']
@@ -55,6 +59,7 @@ class JsCrawlAdapter(Adapter):
         max_depth = int(self.cfg.get('max_depth', 2))
         wait_selector = self.cfg.get('wait_selector')  # optional
         max_rendered = int(self.cfg.get('max_rendered_pages', 20))
+        recrawl_ttl = int(self.cfg.get('recrawl_ttl_seconds', 0))  # optional, 0 disables
 
         visited: Set[str] = set()
         rendered = 0
@@ -77,7 +82,35 @@ class JsCrawlAdapter(Adapter):
                         counters['skipped_robots'] += 1
                         continue
 
+                    # Optional TTL-based skip
+                    if recrawl_ttl > 0:
+                        last_seen = dbm.get_last_seen(conn, url)
+                        if last_seen is not None and (time.time() - last_seen) < recrawl_ttl:
+                            continue
+                    # Preflight conditional GET to avoid rendering unchanged pages
                     rl.await_slot(url, rps)
+                    etag, lastmod = dbm.get_resource_etag_lastmod(conn, url)
+                    try:
+                        resp0 = http.get(
+                            url,
+                            etag=etag,
+                            last_modified=lastmod,
+                            extra_headers={"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
+                            max_retries=1,
+                        )
+                    except Exception:
+                        counters['errors'] += 1
+                        continue
+                    counters['fetched'] += 1
+                    counters['status'][resp0.status_code] = counters['status'].get(resp0.status_code, 0) + 1
+                    if resp0.status_code == 304:
+                        # unchanged; skip expensive render
+                        continue
+                    if resp0.status_code != 200:
+                        counters['errors'] += 1
+                        continue
+                    dbm.set_resource_etag_lastmod(conn, url, resp0.headers.get('ETag'), resp0.headers.get('Last-Modified'))
+
                     try:
                         page.set_default_navigation_timeout(30000)
                         page.set_default_timeout(30000)
@@ -107,4 +140,3 @@ class JsCrawlAdapter(Adapter):
                 page.close()
                 context.close()
                 browser.close()
-

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from collections import deque
 from typing import Iterable, Set
 from urllib.parse import urljoin, urlsplit
@@ -8,6 +9,7 @@ from urllib.parse import urljoin, urlsplit
 from lxml import html
 
 from src.adapters.base import Adapter
+from src.core import db as dbm
 from src.core.models import Discovered
 
 
@@ -42,11 +44,13 @@ class CrawlerAdapter(Adapter):
         http = self.ctx['http']
         robots = self.ctx['robots']
         rl = self.ctx['ratelimiter']
+        conn = self.ctx['db']
         counters = self.ctx['counters']
 
         base = self.cfg['base']
         rps = float(self.cfg.get('rate_limit_rps', 0.5))
         max_depth = int(self.cfg.get('max_depth', 2))
+        recrawl_ttl = int(self.cfg.get('recrawl_ttl_seconds', 0))  # optional, 0 disables
 
         visited: Set[str] = set()
         q = deque([(base, 0)])
@@ -61,13 +65,27 @@ class CrawlerAdapter(Adapter):
                 continue
             if not self._in_scope(url):
                 continue
+            # Optional TTL-based skip
+            if recrawl_ttl > 0:
+                last_seen = dbm.get_last_seen(conn, url)
+                if last_seen is not None and (time.time() - last_seen) < recrawl_ttl:
+                    continue
             rl.await_slot(url, rps)
-            resp = http.get(url)
+            etag, lastmod = dbm.get_resource_etag_lastmod(conn, url)
+            try:
+                resp = http.get(url, etag=etag, last_modified=lastmod)
+            except Exception:
+                counters['errors'] += 1
+                continue
             counters['fetched'] += 1
             counters['status'][resp.status_code] = counters['status'].get(resp.status_code, 0) + 1
+            if resp.status_code == 304:
+                # Unchanged; skip parsing and do not enqueue children
+                continue
             if resp.status_code != 200:
                 counters['errors'] += 1
                 continue
+            dbm.set_resource_etag_lastmod(conn, url, resp.headers.get('ETag'), resp.headers.get('Last-Modified'))
             counters['parsed'] += 1
             for link in self.extract_links(url, resp.text):
                 if not self._in_scope(link):
@@ -76,4 +94,3 @@ class CrawlerAdapter(Adapter):
                 counters['discovered'] += 1
                 if depth + 1 <= max_depth:
                     q.append((link, depth + 1))
-

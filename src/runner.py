@@ -7,6 +7,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple
+from tqdm import tqdm
 
 import yaml
 
@@ -77,7 +78,7 @@ def run_once(*, sites_path: str, out_dir: str, since_seconds: int | None) -> int
     # Logging and counters per site
     summary: List[Tuple[str, int, int, int]] = []  # site_id, new_count, total_seen, errors
     with open(log_path, 'w') as logf:
-        for s in sites:
+        for s in tqdm(sites):
             counters: Dict = {
                 'fetched': 0,
                 'parsed': 0,
@@ -97,17 +98,27 @@ def run_once(*, sites_path: str, out_dir: str, since_seconds: int | None) -> int
             adapter = _select_adapter(s, ctx)
             logf.write(f"[{s.id}] start kind={s.kind}\n")
             try:
-                for d in adapter.discover():
-                    # Normalize and enrich with one-round redirect + canonical
-                    final_url, canon_tag = normalize_url(d.url), None
+                for d in tqdm(adapter.discover()):
+                    # Normalize first, then resolve canonical only if likely new
+                    naive_norm = normalize_url(d.url)
+                    final_url, canon_tag = naive_norm, None
+                    # Only resolve redirects/canonical for URLs not seen before
                     try:
-                        resolved, canon = resolve_canonical_once(d.url, http, robots=robots, ratelimiter=rl, rps=float(s.cfg.get('rate_limit_rps', 1.0)))
-                        candidate = canon or resolved
-                        canon_tag = canon
-                        final_url = normalize_url(candidate)
+                        if not dbm.has_url(conn, naive_norm):
+                            resolved, canon = resolve_canonical_once(
+                                d.url,
+                                http,
+                                robots=robots,
+                                ratelimiter=rl,
+                                rps=float(s.cfg.get('rate_limit_rps', 1.0)),
+                            )
+                            candidate = canon or resolved
+                            canon_tag = canon
+                            final_url = normalize_url(candidate)
                     except Exception:
-                        # Fallback to simple normalization
-                        final_url = normalize_url(d.url)
+                        # Fallback: keep naive normalization
+                        final_url = naive_norm
+
                     is_new_url, first_seen_url = dbm.upsert_url(
                         conn,
                         final_url,

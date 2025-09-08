@@ -122,6 +122,19 @@ def get_resource_etag_lastmod(conn: sqlite3.Connection, resource_url: str) -> Tu
     return row[0], row[1]
 
 
+def has_url(conn: sqlite3.Connection, url: str) -> bool:
+    cur = conn.execute("SELECT 1 FROM urls WHERE url=? LIMIT 1", (url,))
+    return cur.fetchone() is not None
+
+
+def get_last_seen(conn: sqlite3.Connection, url: str) -> Optional[int]:
+    cur = conn.execute("SELECT last_seen FROM urls WHERE url=?", (url,))
+    row = cur.fetchone()
+    if not row:
+        return None
+    return int(row[0]) if row[0] is not None else None
+
+
 def query_new_urls(conn: sqlite3.Connection, *, start_ts: int, end_ts: int) -> Iterable[Tuple[str, str, int, Optional[str]]]:
     sql = (
         "SELECT source_id, url, first_seen, (SELECT lastmod FROM urls u WHERE u.url = url_by_source.url) as lastmod "
