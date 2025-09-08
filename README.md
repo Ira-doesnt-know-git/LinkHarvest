@@ -8,7 +8,7 @@ LinkHarvest is a pull‑based aggregator that discovers article/post URLs from m
 
 - WordPress, RSS/Atom, Sitemap, and Crawl adapters; optional Playwright for JS rendering
 - SQLite persistence with strict URL normalization and first_seen/last_seen tracking
-- Conditional GET (ETag/Last‑Modified) for feeds/sitemaps/APIs
+- Conditional GET (ETag/Last‑Modified) for feeds/sitemaps/APIs and crawled HTML pages (skips unchanged pages on 304)
 - Per‑host rate limiting + retries with exponential backoff and jitter
 - Per‑run artifacts (NDJSON/CSV) and per‑site counts, with run logs
 
@@ -63,6 +63,40 @@ The adapter fetches:
 - Crawl (static): `kind: crawl`, with `base`, `scope_host`, optional `include_paths`, `exclude_patterns`, `max_depth`, `rate_limit_rps`
 - JS‑Crawl: same as Crawl but add `js_render: true` and optional `wait_selector`, `max_rendered_pages` (requires Playwright)
 
+  Crawl specifics:
+  - Uses ETag/Last‑Modified to skip unchanged pages (304) and prunes traversal (children not enqueued when parent unchanged)
+  - Optional TTL via `recrawl_ttl_seconds` to skip pages seen recently
+
+  JS‑Crawl specifics:
+  - Performs a preflight conditional GET before rendering; skips Playwright when preflight returns 304
+  - Supports `recrawl_ttl_seconds` like Crawl
+
+### Crawl examples with TTL
+
+```
+- id: example_crawl
+  kind: crawl
+  base: https://weirdsite.tld
+  scope_host: weirdsite.tld
+  include_paths: ["/updates/"]
+  exclude_patterns: ["/page/\\d+$"]
+  max_depth: 2
+  rate_limit_rps: 0.5
+  recrawl_ttl_seconds: 900   # optional: skip refetch if seen within last 15m
+```
+
+```
+- id: example_js_crawl
+  kind: crawl
+  base: https://spa.example
+  scope_host: spa.example
+  js_render: true
+  wait_selector: ".article-list"
+  max_rendered_pages: 20
+  rate_limit_rps: 0.5
+  recrawl_ttl_seconds: 900
+```
+
 ## CLI usage
 
 ```bash
@@ -97,10 +131,14 @@ latest_all.csv       # only when --since is set (site_id,url,last_seen_iso,lastm
   - Collapse `/index.html` → `/`
   - One‑round redirect resolution; prefer `<link rel="canonical">` if present
 
+Note on canonical handling:
+- Redirect/canonical resolution runs when a URL is first seen; known URLs skip re‑resolution to avoid extra network calls. If you need periodic canonical revalidation, schedule an occasional recheck.
+
 ## Politeness & resilience
 
 - robots.txt honored for all fetches (APIs/feeds/sitemaps/crawl/JS crawl)
 - Token‑bucket rate limiting per host (`rate_limit_rps` per site)
+- Conditional requests for crawled HTML pages (not just feeds/APIs) to reduce bandwidth and runtime
 - Retries: up to 3 on 5xx/429/network with exponential backoff (base 0.5s, max 8s, ±20% jitter)
 - Timeouts: HTTP connect 5s, read 20s; Playwright navigation default timeout 30s
 
@@ -110,6 +148,8 @@ latest_all.csv       # only when --since is set (site_id,url,last_seen_iso,lastm
 - If a WordPress site returns errors or 403s, try switching that site to `kind: rss` or `kind: sitemap`.
 - If no new items appear, ensure URLs actually changed since the last run (diff logic keys off `first_seen`).
 - For JS crawling, ensure browsers are installed: `python3 -m playwright install chromium`.
+- If a site doesn’t send ETag/Last‑Modified, 304 pruning during crawling is limited; consider setting `recrawl_ttl_seconds` to bound revisit frequency.
+- If deep pages change without parent listing pages changing, lower TTL temporarily or rerun an indexing pass with a higher `max_depth`.
 
 ## Repository layout
 
