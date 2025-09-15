@@ -1,6 +1,6 @@
-# LinkHarvest — Multi‑site URL discovery and “new posts” detector
+# Scurry — Multi‑site URL discovery and “new posts” detector
 
-LinkHarvest is a pull‑based aggregator that discovers article/post URLs from many sites using the best available source per site (WordPress REST API, RSS/Atom, sitemaps, or crawling). It persists history in SQLite so each run can output only newly seen URLs. Designed for newsfeed‑like consumers and polite by default (robots.txt, rate limits, conditional GETs).
+Scurry is a pull‑based aggregator that discovers article/post URLs from many sites using the best available source per site (WordPress REST API, RSS/Atom, sitemaps, or crawling). It persists history in SQLite so each run can output only newly seen URLs. Designed for newsfeed‑like consumers and polite by default (robots.txt, rate limits, conditional GETs).
 
 ---
 
